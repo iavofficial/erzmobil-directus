@@ -1,0 +1,25 @@
+{
+  "name": "@a01wielo/system-push-module",
+  "version": "1.0.0",
+  "description": "A Directus v9 module for sending system push notifications using firebase cloud messaging",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "npx directus-extension build",
+    "deploy": "DOTENV_CONFIG_PATH=../.env node scripts/deploy.js"
+  },
+  "author": "Arthur Wielomski <arthur.kajetan.wielomski@iav.de>",
+  "license": "MIT",
+  "devDependencies": {
+    "@directus/extensions-sdk": "^9.0.0-rc.98"
+  },
+  "directus:extension": {
+    "type": "module",
+    "path": "dist/index.js",
+    "source": "src/index.js",
+    "host": "^9.0.0-rc.98",
+    "hidden": false
+  },
+  "dependencies": {
+    "vue3-loading-overlay": "^0.0.0"
+  }
+}
