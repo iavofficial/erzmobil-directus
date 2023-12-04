@@ -24,7 +24,7 @@
 		"@types/amqplib": "^0.8.2",
 		"amqplib": "^0.8.0",
 		"axios": "^0.25.0",
-		"firebase-admin": "^10.2.0",
+		"firebase-admin": "^11.11.1",
 		"moment-timezone": "^0.5.34"
 	}
 }
