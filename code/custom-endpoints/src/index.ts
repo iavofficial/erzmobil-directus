@@ -150,8 +150,7 @@ export default (router, { env, services, exceptions, schema, logger }) => {
 
     var alreadyThereTokens = await tokenService.readByQuery({
       fields: ['fcmToken'],
-      filter: { fcmToken: { _eq: req.body["fcmToken"] } },
-      limit: -1,
+      filter: { fcmToken: { _eq: req.body["fcmToken"] } }
     });
     if (alreadyThereTokens.length == 0) {
 

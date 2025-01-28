@@ -96,7 +96,7 @@ export async function orderItemsDeleteHandler(ItemsService: any, collection: any
                         console.log(tokens);
                         if (tokens !== undefined && tokens.length > 0) {
 
-                            getMessaging(fcmApp_driver).sendMulticast({
+                            getMessaging(fcmApp_driver).sendEachForMulticast({
                                 tokens: tokens,
                                 data: {
                                     id: "9",

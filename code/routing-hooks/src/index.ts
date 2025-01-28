@@ -255,7 +255,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 
 						if (driverTokens !== undefined && driverTokens.length > 0) {
 
-							getMessaging(fcmApp_driver).sendMulticast({
+							getMessaging(fcmApp_driver).sendEachForMulticast({
 								tokens: driverTokens,
 								data: {
 									id: "1",
@@ -297,7 +297,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 						logger.debug('getUserToken returned:' + JSON.stringify(userToken));
 
 						if (userToken !== undefined && userToken.length > 0) {
-							getMessaging(fcmApp_user).sendMulticast({
+							getMessaging(fcmApp_user).sendEachForMulticast({
 								tokens: userToken,
 								data: {
 									id: "2",
@@ -362,6 +362,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 					logger.info('RouteRejectedIntegrationEvent');
 					logger.info('orderId: ' + parsedContent.orderId);
 					logger.info('cancellationReason: ' + parsedContent.cancellationReason);
+					const parsedData = parseErrorMessage(parsedContent.cancellation_reason);
 					const options = {
 						headers: {
 							'Content-Type': 'application/json'
@@ -380,7 +381,12 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 					try {
 						await axios.post(env.PUBLIC_URL + '/items/rejected?access_token=' + env.API_ACCESS_TOKEN, {
 							orderId: parsedContent.orderId,
-							reason: parsedContent.cancellationReason
+							reason: parsedData.reason,
+							start: parsedData.start,
+							destination: parsedData.destination,
+							datetime: parsedData.datetime,
+							seats: parsedData.seats,
+							seats_wheelchair: parsedData.seats_wheelchair
 						}, options);
 					} catch (err) {
 						logger.error(err);
@@ -456,6 +462,75 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 			amqpChannel.ack(msg);
 		}
 
+		interface ParsedError {
+			reason?: string;
+			start?: string;
+			destination?: string;
+			datetime?: string;
+			seats?: number;
+			seats_wheelchair?: number;
+		}
+			
+		function parseErrorMessage(message: string): ParsedError {
+			const result: ParsedError = {};
+			
+			// Extract reason (first sentence)
+			const parts = message.split(' - ');
+			const sentenceMatch = message.match(/^[^!.]*[!.]/);
+			
+			if (parts.length > 1 && parts[0]) {
+				result.reason = parts[0].trim();
+			} else if (sentenceMatch && sentenceMatch[0]) {
+				result.reason = sentenceMatch[0].trim();
+			} else {
+				result.reason = message.trim();
+			}
+			
+			// Extract start location
+			const startMatch = message.match(/Start:\s+([^,]+,\s+[^(]+\s+\(\d+\.\d+,\s*\d+\.\d+\))/);
+			if (startMatch?.[1]) {
+				result.start = startMatch[1];
+			}
+			
+			// Extract destination
+			const destMatch = message.match(/Destination:\s+([^,]+,\s+[^(]+\s+\(\d+\.\d+,\s*\d+\.\d+\))/);
+			if (destMatch?.[1]) {
+				result.destination = destMatch[1];
+			}
+			
+			// Extract datetime
+			const dateMatch = message.match(/(?:Time|Requested time|Requested departure time):\s+(\d{4}\/\d{2}\/\d{2},\s+\d{2}:\d{2}\s+\(UTC\))/);
+			if (dateMatch?.[1]) {
+				result.datetime = dateMatch[1];
+			}
+			
+			// Extract seats - look for requested seats first
+			const requestedSeatsMatch = message.match(/Requested seats:\s+(\d+)\s+standard/);
+			if (requestedSeatsMatch?.[1]) {
+				result.seats = parseInt(requestedSeatsMatch[1], 10);
+			} else {
+				// Fall back to looking for seats in the general format
+				const seatsMatch = message.match(/(?<!Seats[^:]*):.*?(\d+)\s+standard(?:\s+seats)?/);
+				if (seatsMatch?.[1]) {
+				result.seats = parseInt(seatsMatch[1], 10);
+				}
+			}
+			
+			// Extract wheelchair seats - look for requested seats first
+			const requestedWheelchairMatch = message.match(/Requested seats:.*?(\d+)\s+wheelchair/);
+			if (requestedWheelchairMatch?.[1]) {
+				result.seats_wheelchair = parseInt(requestedWheelchairMatch[1], 10);
+			} else {
+				// Fall back to looking for wheelchair seats in the general format
+				const wheelchairMatch = message.match(/(?<!Seats[^:]*):.*?(\d+)\s+wheelchair(?:\s+seats)?/);
+				if (wheelchairMatch?.[1]) {
+				result.seats_wheelchair = parseInt(wheelchairMatch[1], 10);
+				}
+			}
+			
+			return result;
+		}
+
 		async function getUserToken(tokenService: any, userId: any) {
 			const userTokens = await tokenService.readByQuery({
 				fields: ['fcmToken'],
@@ -529,7 +604,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 				logger.debug('fcm driver: ' + JSON.stringify(multicastMessage));
 
 				// send.
-				getMessaging(fcmApp_driver).sendMulticast(multicastMessage)
+				getMessaging(fcmApp_driver).sendEachForMulticast(multicastMessage)
 					.then((response) => {
 						logger.debug('response fcm driver send: ' + JSON.stringify(response));
 					}).catch((error) => {
@@ -550,7 +625,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 					if (order.tokens !== undefined && order.tokens.length > 0) {
 						// order.tokens.forEach((token : string))
 						var timeZonedDate = moment(order.date).tz("Europe/Berlin");
-						getMessaging(fcmApp_user).sendMulticast({
+						getMessaging(fcmApp_user).sendEachForMulticast({
 							tokens: order.tokens,
 							data: {
 								id: "8",
