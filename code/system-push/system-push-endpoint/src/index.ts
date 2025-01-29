@@ -113,8 +113,7 @@ export default async function (router, { env, services, exceptions, getSchema, l
 							}
 						}
 					}
-				},
-				limit: -1,
+				}
 			});
 
 			logger.debug(JSON.stringify(tokensByRoleId));
@@ -145,7 +144,7 @@ export default async function (router, { env, services, exceptions, getSchema, l
 
 			var returnMessage;
 			var errorThrown = false;
-			getMessaging(fcmApp_user).sendMulticast({
+			getMessaging(fcmApp_user).sendEachForMulticast({
 				tokens: tokenArray,
 				data: {
 					id: "4",
