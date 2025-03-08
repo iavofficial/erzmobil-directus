@@ -23,7 +23,7 @@
 	"dependencies": {
 		"@types/amqplib": "^0.8.2",
 		"amqplib": "^0.8.0",
-		"axios": "^0.25.0",
+		"axios": "^1.8.2",
 		"firebase-admin": "^13.0.1",
 		"moment-timezone": "^0.5.34"
 	}
