@@ -1,5 +1,5 @@
 import amqp from 'amqplib';
-import axios from 'axios';
+import axios, { AxiosResponse } from 'axios';
 import path from 'path';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getMessaging, MulticastMessage } from 'firebase-admin/messaging';
@@ -8,7 +8,7 @@ import preconfiguredRoles from './roles.json';
 import { stopItemsCreateHandler, stopItemsUpdateHandler, stopItemsDeleteHandler } from './stopsEventHandler';
 import { busItemsUpdateHandler, busItemsDeleteHandler } from './busEventHandler';
 import { orderItemsCreateHandler, orderItemsDeleteHandler } from './orderEventHandler';
-import moment from 'moment-timezone';
+import moment, { now } from 'moment-timezone';
 import { useApi, useStores } from '@directus/extensions-sdk';
 
 
@@ -123,6 +123,9 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 	/* -----------------------------------Order ---------------------------------*/
 
 	filter('order.items.create', async (input, { collection }, { database, schema }) => {
+		// input.time = new Date(input.time);
+		// input.departure_time = new Date(input.start_time_minimum);
+		// input.departure_time = input.start_time_minimum;
 		input.customerStatus = true;
 	})
 
@@ -147,7 +150,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 		//logger.debug('schema: ' + schema);
 		if (input["payload"]["status"] !== undefined) {
 			if (input["payload"]["status"] == "Cancelled") {
-				logger.debug('order ' + input["keys"][0] + ' was cancelled by the user.');
+				logger.debug('order ' + input["keys"][0] + ' was cancelled.');
 				logger.debug('starting order cancel routine');
 				await orderItemsDeleteHandler(ItemsService, input["collection"], database, schema, input, input["keys"][0], amqpChannel, env, fcmApp_driver, ServiceUnavailableException, axios);
 			}
@@ -159,19 +162,22 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 
 	async function onMessageReceived(msg: amqp.ConsumeMessage | null) {
 		if (msg != null) {
-			let parsedContent;
+			let parsedContent = null;
 			try {
 				parsedContent = JSON.parse(msg.content.toString());
 			} catch (err) {
 				console.error(err);
 			}
 			if (parsedContent != null) {
+
 				if (msg.fields.routingKey == constValues.rabbitmq_routing_routingkey_routeconfirmed) {
 
 
 					logger.info('RouteConfirmedIntegrationEvent');
 					logger.info('msg.fields.routingkey: ' + msg.fields.routingKey);
-
+					// await ordersService.updateOne(key: msg.fields.routingKey, data: {
+					// 	"status":"Cancelled"
+					// });
 					// set order to Reserved! 
 
 					const options = {
@@ -182,7 +188,6 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 
 					//try {
 
-					var orderDetails = {};
 					var order = await axios.patch(env.PUBLIC_URL + '/items/order' + '/' + parsedContent.orderId + '?fields=*.*&access_token=' + env.API_ACCESS_TOKEN, {
 						route_id: parsedContent.newRouteId == undefined ? parsedContent.routeId : parsedContent.newRouteId,
 						status: "Reserved",
@@ -228,6 +233,9 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 					}
 
 
+					//console.log(mnr);
+					//TODO: Versand der Mail an SNS
+					//TODO: Versand der Notification über FCM
 					logger.debug(JSON.stringify(mnr.toEmails));
 					logger.debug(JSON.stringify(mailRecipents));
 					logger.debug(JSON.stringify(mnr));
@@ -326,7 +334,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 							}).then((respo) => {
 								logger.debug('response fcm user transmit: ' + JSON.stringify(respo));
 							}).catch((error) => {
-								logger.error('Error during fcm transmission!');
+								logger.error('Error during fcm transmission! ' + error);
 							})
 						}
 					}
@@ -343,7 +351,6 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 					};
 
 					try {
-						var orderDetails = {};
 						var order = await axios.patch(env.PUBLIC_URL + '/items/order' + '/' + parsedContent.orderId + '?fields=*.*&access_token=' + env.API_ACCESS_TOKEN, {
 							route_id: parsedContent.newRouteId == undefined ? parsedContent.routeId : parsedContent.newRouteId,
 							status: "Reserved",
@@ -352,6 +359,8 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 							destination_time_minimum: parsedContent.destinationTimeMinimum,
 							destination_time_maximum: parsedContent.destinationTimeMaximum
 						}, options).then((order) => {
+							// console.log(order);
+							// logger.debug(order);
 							return order;
 						});
 					} catch (error) {
@@ -359,10 +368,17 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 					}
 
 				} else if (msg.fields.routingKey == constValues.rabbitmq_routing_routingkey_routerejected) {
+					// Ensure datetime is valid and formatted correctly
+					const datetimeValue = parsedContent.datetime ? new Date(parsedContent.datetime).toISOString() : new Date().toISOString();
+
+					// Check for other undefined or empty values and handle them
+					const reasonValue = parsedContent.reason || "No reason provided";
+
 					logger.info('RouteRejectedIntegrationEvent');
 					logger.info('orderId: ' + parsedContent.orderId);
-					logger.info('cancellationReason: ' + parsedContent.cancellationReason);
-					const parsedData = parseErrorMessage(parsedContent.cancellation_reason);
+					logger.info('cancellationReason: ' + reasonValue);
+					logger.info('datetimeValue: ' + datetimeValue);
+					logger.info('parsedContent.datetime: ' + parsedContent.datetime);
 					const options = {
 						headers: {
 							'Content-Type': 'application/json'
@@ -370,28 +386,35 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 					};
 
 					try {
-						await axios.patch(env.PUBLIC_URL + '/items/order' + '/' + parsedContent.orderId + '?access_token=' + env.API_ACCESS_TOKEN, {
-							status: "Cancelled",
-							cancellation_reason: "cancelled by RouteRejected Event"
-						}, options);
+						if (!parsedContent.orderId || parsedContent.orderId < 0) {
+							logger.info('parsedContent.orderId is not valid: ' + parsedContent.orderId + ' - can not update order status (there is no item with this orderId)');
+						}
+						else {
+							await axios.patch(env.PUBLIC_URL + '/items/order' + '/' + parsedContent.orderId + '?access_token=' + env.API_ACCESS_TOKEN, {
+								status: "Cancelled",
+								cancellation_reason: "cancelled by RouteRejected Event"
+							}, options);
+						}
 					} catch (err) {
-						logger.error(err);
+						logger.error("Error patching rejection reason to the order in RouteRejectedIntegrationEvent: " + err);
 					}
 
 					try {
-						await axios.post(env.PUBLIC_URL + '/items/rejected?access_token=' + env.API_ACCESS_TOKEN, {
-							orderId: parsedContent.orderId,
-							reason: parsedData.reason,
-							start: parsedData.start,
-							destination: parsedData.destination,
-							datetime: parsedData.datetime,
-							seats: parsedData.seats,
-							seats_wheelchair: parsedData.seats_wheelchair
+						const response: AxiosResponse = await axios.post(env.PUBLIC_URL + '/items/rejected?access_token=' + env.API_ACCESS_TOKEN, {
+							orderId: parsedContent.orderId.toString(),
+							reason: reasonValue,
+							start: parsedContent.start.toString(),
+							destination: parsedContent.destination.toString(),
+							datetime: datetimeValue,
+							seats: parsedContent.seats,
+							seats_wheelchair: parsedContent.seats_wheelchair
 						}, options);
-					} catch (err) {
-						logger.error(err);
-					}
 
+						logger.info('added new rejected item, response: ');
+    					logger.info(JSON.stringify(response.data, null, 2)); // Pretty-print the response data
+					} catch (err) {
+						logger.error("Error posting new rejected item in RouteRejectedIntegrationEvent: " + err);
+					}
 				} else if (msg.fields.routingKey == constValues.rabbitmq_routing_routingkey_routefrozen) {
 					logger.info('routeFrozenIntegrationEvent');
 					logger.info('routeFrozen: ' + parsedContent?.routeId);
@@ -437,6 +460,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 					try {
 						axios.get(env.PUBLIC_URL + '/items/order?filter[route_id][_eq]=' + parsedContent.routeId + '&filter[status][_eq]=RideStarted&access_token=' + env.API_ACCESS_TOKEN)
 							.then((orders) => {
+								// console.log(orders.data.data);
 								var ids: any[] = [];
 								orders.data.data.forEach((order: any) => {
 									ids.push(order.id);
@@ -448,9 +472,11 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 										ride_finished_on: new Date().toISOString()
 									}
 								}).then((rideStartedResponse) => {
+									// console.log(rideStartedResponse);
 								}).catch((err) => {
 									logger.log(err);
 								});
+								// console.log(ids);
 								// return orders;
 							});
 					} catch (err) {
@@ -460,75 +486,6 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 
 			}
 			amqpChannel.ack(msg);
-		}
-
-		interface ParsedError {
-			reason?: string;
-			start?: string;
-			destination?: string;
-			datetime?: string;
-			seats?: number;
-			seats_wheelchair?: number;
-		}
-			
-		function parseErrorMessage(message: string): ParsedError {
-			const result: ParsedError = {};
-			
-			// Extract reason (first sentence)
-			const parts = message.split(' - ');
-			const sentenceMatch = message.match(/^[^!.]*[!.]/);
-			
-			if (parts.length > 1 && parts[0]) {
-				result.reason = parts[0].trim();
-			} else if (sentenceMatch && sentenceMatch[0]) {
-				result.reason = sentenceMatch[0].trim();
-			} else {
-				result.reason = message.trim();
-			}
-			
-			// Extract start location
-			const startMatch = message.match(/Start:\s+([^,]+,\s+[^(]+\s+\(\d+\.\d+,\s*\d+\.\d+\))/);
-			if (startMatch?.[1]) {
-				result.start = startMatch[1];
-			}
-			
-			// Extract destination
-			const destMatch = message.match(/Destination:\s+([^,]+,\s+[^(]+\s+\(\d+\.\d+,\s*\d+\.\d+\))/);
-			if (destMatch?.[1]) {
-				result.destination = destMatch[1];
-			}
-			
-			// Extract datetime
-			const dateMatch = message.match(/(?:Time|Requested time|Requested departure time):\s+(\d{4}\/\d{2}\/\d{2},\s+\d{2}:\d{2}\s+\(UTC\))/);
-			if (dateMatch?.[1]) {
-				result.datetime = dateMatch[1];
-			}
-			
-			// Extract seats - look for requested seats first
-			const requestedSeatsMatch = message.match(/Requested seats:\s+(\d+)\s+standard/);
-			if (requestedSeatsMatch?.[1]) {
-				result.seats = parseInt(requestedSeatsMatch[1], 10);
-			} else {
-				// Fall back to looking for seats in the general format
-				const seatsMatch = message.match(/(?<!Seats[^:]*):.*?(\d+)\s+standard(?:\s+seats)?/);
-				if (seatsMatch?.[1]) {
-				result.seats = parseInt(seatsMatch[1], 10);
-				}
-			}
-			
-			// Extract wheelchair seats - look for requested seats first
-			const requestedWheelchairMatch = message.match(/Requested seats:.*?(\d+)\s+wheelchair/);
-			if (requestedWheelchairMatch?.[1]) {
-				result.seats_wheelchair = parseInt(requestedWheelchairMatch[1], 10);
-			} else {
-				// Fall back to looking for wheelchair seats in the general format
-				const wheelchairMatch = message.match(/(?<!Seats[^:]*):.*?(\d+)\s+wheelchair(?:\s+seats)?/);
-				if (wheelchairMatch?.[1]) {
-				result.seats_wheelchair = parseInt(wheelchairMatch[1], 10);
-				}
-			}
-			
-			return result;
 		}
 
 		async function getUserToken(tokenService: any, userId: any) {
@@ -816,6 +773,11 @@ async function getAdminUserId(env: any, access_token: any, logger: any) {
 }
 
 async function adminLogin(env: any, logger: any) {
+	logger.info('PUBLIC_URL: ' + env.PUBLIC_URL);
+	// logger.info('ADMIN_EMAIL: ' + env.ADMIN_EMAIL);
+	// logger.info('ADMIN_PASSWORD: ' + env.ADMIN_PASSWORD);
+	logger.info('Authentification with ADMIN_EMAIL & ADMIN_PASSWORD');
+
 	return await axios.post(env.PUBLIC_URL + '/auth/login', {
 		email: env.ADMIN_EMAIL,
 		password: env.ADMIN_PASSWORD
@@ -824,6 +786,7 @@ async function adminLogin(env: any, logger: any) {
 			'Content-Type': 'application/json'
 		}
 	}).then((resp) => {
+		logger.info('Authentification with ADMIN_EMAIL & ADMIN_PASSWORD Done!');
 		return resp.data.data.access_token;
 	}).catch((error) => {
 		logger.error('Error during /auth/login from directus extension.\n' + error);
