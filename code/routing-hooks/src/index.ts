@@ -363,6 +363,53 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 							// logger.debug(order);
 							return order;
 						});
+
+						// send driver app pushes
+						if (env.SEND_FCM !== undefined && env.SEND_FCM == true) {
+							console.log('send fcm to drivers: notification_message_routechanged');
+							console.log('orderId: ' + parsedContent.orderId + " type: " + typeof parsedContent.orderId);
+							console.log('oldRouteId: ' + parsedContent.oldRouteId + " type: " + typeof parsedContent.oldRouteId);
+							
+							const newRouteId = parsedContent.newRouteId == undefined ? parsedContent.routeId : parsedContent.newRouteId
+							console.log('newRouteId: ' + newRouteId);
+
+							const driverTokens = await getDriverTokens(tokenService);
+							// const driverTokens = ["czuzFSSPTWK7qGnmlLzjvQ:APA91bGTy_BqLNXsW48oEaclmen39MbY-3tAq_Nt5BzfWnWHmrqB7jqZsYtTxGgIzPfVSA-gG0Qzht4RgVzgDXn-dn5Pn4ENkjdIfFUjCI3MGAkdnBtCGRI"]
+
+							logger.debug('getDriverTokens returned:' + JSON.stringify(driverTokens));
+							
+							if (driverTokens !== undefined && driverTokens.length > 0) {
+								getMessaging(fcmApp_driver).sendEachForMulticast({
+									tokens: driverTokens,
+									data: {
+										id: "10",
+										order_id: parsedContent.orderId.toString(),
+										route_id_old: parsedContent.oldRouteId.toString(),
+										route_id_new: newRouteId.toString()
+									},
+									android: {
+										notification: {
+											bodyLocKey: "notification_message_routechanged",
+											titleLocKey: "notification_title_routechanged"
+										}
+									},
+									apns: {
+										payload: {
+											aps: {
+												alert: {
+													locKey: "notificationMessageRoutechanged",
+													titleLocKey: "notificationTitleRoutechanged"
+												}
+											}
+										}
+									}
+								}).then((respo) => {
+									logger.debug('response from fcm driver transmit for notification_message_routechanged: ' + JSON.stringify(respo));
+								}).catch((error) => {
+									logger.error('Error during fcm transmission of notification_message_routechanged!');
+								})
+							}
+						}
 					} catch (error) {
 						logger.error(error);
 					}

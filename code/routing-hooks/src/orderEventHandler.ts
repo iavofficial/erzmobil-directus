@@ -77,8 +77,13 @@ export async function orderItemsDeleteHandler(ItemsService: any, collection: any
                 }
             }
             if (env.SEND_FCM !== undefined && env.SEND_FCM) {
+                console.log('send fcm to driver notification_message_journey_cancelled');
+                console.log('date: ' + startTimeMinimumLocalDateTime.toISOString());
+                console.log('start_address_id: ' + order[0].start_address_id.name);
+                console.log('destination_address_id: ' + order[0].destination_address_id.name);
+                console.log('order_id: ' + order[0].id);
+                console.log('route_id: ' + order[0].route_id);
 
-                console.log('send fcm to driver');
                 await axios.get(env.PUBLIC_URL + '/items/token?fields=*.*&filter[isDriver][_eq]=true&access_token=' + env.API_ACCESS_TOKEN)
                     .then((result) => {
                         var tokenResult = result.data.data;
@@ -102,7 +107,9 @@ export async function orderItemsDeleteHandler(ItemsService: any, collection: any
                                     id: "9",
                                     date: startTimeMinimumLocalDateTime.toISOString(),
                                     start: order[0].start_address_id.name,
-                                    stop: order[0].destination_address_id.name
+                                    stop: order[0].destination_address_id.name,
+                                    order_id: order[0].id.toString(),
+                                    route_id : order[0].route_id.toString()
                                 },
                                 android: {
                                     notification: {
