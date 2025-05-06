@@ -1,6 +1,6 @@
 #!/bin/bash
 
-sh ./aws_build_and_deploy.sh  
+sh ./aws_build_and_copy.sh  
 sh ./customendpoint_build_and_copy.sh
 sh ./mphooks_build_and_copy.sh
 sh ./routinghooks_build_and_copy.sh
