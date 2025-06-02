@@ -7,7 +7,6 @@
     "build": "npx directus-extension build",
     "deploy": "DOTENV_CONFIG_PATH=../.env node scripts/deploy.js"
   },
-  "author": "Arthur Wielomski <arthur.kajetan.wielomski@iav.de>",
   "license": "MIT",
   "devDependencies": {
     "@directus/extensions-sdk": "^9.0.0-rc.98"

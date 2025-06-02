@@ -1,3 +1,20 @@
+/*
+Copyright © 2025 IAV GmbH Ingenieurgesellschaft Auto und Verkehr, All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
+*/
 import { AxiosStatic } from "axios";
 import { constValues } from "./const";
 import { getMessaging } from "firebase-admin/messaging";
@@ -76,7 +93,9 @@ export async function orderItemsDeleteHandler(ItemsService: any, collection: any
                     }
                 }
             }
-            if (env.SEND_FCM !== undefined && env.SEND_FCM) {
+
+            // deactivate driver push, replaced by driver warning rabbitmq_routing_routingkey_currentroute_changed_driver_warning
+            if (false && env.SEND_FCM !== undefined && env.SEND_FCM) {
                 console.log('send fcm to driver notification_message_journey_cancelled');
                 console.log('date: ' + startTimeMinimumLocalDateTime.toISOString());
                 console.log('start_address_id: ' + order[0].start_address_id.name);
@@ -144,6 +163,12 @@ export async function orderItemsCreateHandler(ItemsService: any, database: any, 
     await orderService.readByQuery({ filter: { id: { _eq: input.key } }, fields: ['id', 'start_address_id.*.*', 'destination_address_id.*.*', 'time', 'seats', 'seats_wheelchair', 'is_departure'] })
         .then((order) => {
             if (amqpChannel !== undefined && amqpChannel !== null) {
+                console.log('order time: ' + order[0].time)
+                // const utcDate = new Date(order[0].time);
+                // const timezoneOffset = utcDate.getTimezoneOffset();
+                // const localDate = new Date(utcDate.getTime() - timezoneOffset * 60000);                
+                // console.log('order time (local): ' + localDate)
+
                 var dto = JSON.stringify({
                     Id: order[0].id,
                     StartLatitude: order[0].start_address_id.location.coordinates[1],
