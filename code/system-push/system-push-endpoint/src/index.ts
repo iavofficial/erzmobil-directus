@@ -1,15 +1,34 @@
+/*
+Copyright © 2025 IAV GmbH Ingenieurgesellschaft Auto und Verkehr, All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
+*/
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import path from 'path';
 
 export default async function (router, { env, services, exceptions, getSchema, logger, database }) {
 
+	
 	const { ItemsService } = services;
 	const { RolesService } = services;
 	const { UsersService } = services;
 	const { ActivityService } = services;
 	const schema = await getSchema();
 	const actionPush = 'pushnotification';
+	const busDriverRole = "Busfahrer";
 	const { ServiceUnavailableException, InvalidPayloadException } = exceptions;
 
 	console.log('init amqp-extension');
@@ -28,6 +47,13 @@ export default async function (router, { env, services, exceptions, getSchema, l
 	logger.debug('fcmApp_user_file: ' + fcmApp_user_file)
 	logger.debug('fcmApp_user_projectid: ' + fcmApp_user_projectid)
 
+	const fcmApp_driver_file = env.FCM_FILE_USER ? env.FCM_FILE_USER : "driver_erzmobil.json"
+	const fcmApp_driver_projectid = env.FCM_DRIVER_PROJECTID ? env.FCM_DRIVER_PROJECTID : "erzmobil-driver"
+	var fcmApp_driver = initializeApp({
+		credential: cert(path.join(__dirname, fcmApp_driver_file)),
+		projectId: fcmApp_driver_projectid
+	}, 'driver')
+
 	router.post('/send', async (req, res) => {
 		try {
 			if (req.body['role'] == undefined) {
@@ -40,7 +66,9 @@ export default async function (router, { env, services, exceptions, getSchema, l
 				return;
 			}
 
-			const role = req.body['role'];
+			const role = req.body['role'];		
+			var fcmApp = role == busDriverRole ? fcmApp_driver : fcmApp_user;
+
 			const content = req.body['content'];
 
 			logger.debug('/send::');
@@ -91,7 +119,6 @@ export default async function (router, { env, services, exceptions, getSchema, l
 			}
 
 			//-----------SPAM CHECK
-
 			const customAccountability = {
 				ip: req.ip,
 				admin: true,
@@ -126,6 +153,8 @@ export default async function (router, { env, services, exceptions, getSchema, l
 			tokensByRoleId.forEach((tkn) => {
 				tokenArray.push(tkn['fcmToken']);
 			})
+			
+			logger.debug("added tokens to tokenArray");
 
 			if (tokenArray.length <= 0) {
 				res.status(204).send({ errror: 'Empty list' });

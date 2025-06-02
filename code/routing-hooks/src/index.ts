@@ -1,3 +1,20 @@
+/*
+Copyright © 2025 IAV GmbH Ingenieurgesellschaft Auto und Verkehr, All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
+*/
 import amqp from 'amqplib';
 import axios, { AxiosResponse } from 'axios';
 import path from 'path';
@@ -10,7 +27,6 @@ import { busItemsUpdateHandler, busItemsDeleteHandler } from './busEventHandler'
 import { orderItemsCreateHandler, orderItemsDeleteHandler } from './orderEventHandler';
 import moment, { now } from 'moment-timezone';
 import { useApi, useStores } from '@directus/extensions-sdk';
-
 
 export default async ({ action, filter, init }, { env, services, getSchema, exceptions, logger }) => {
 
@@ -130,6 +146,8 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 	})
 
 	action('order.items.create', async (input, { collection, database, schema }) => {
+		logger.debug('orderItemsCreateHandler order.items.create fired.')
+		logger.debug('input: ' + JSON.stringify(input));
 		await orderItemsCreateHandler(ItemsService, database, schema, input, amqpChannel);
 	});
 
@@ -143,7 +161,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 
 	action('order.items.update', async (input, { collection, database, schema }) => {
 		// await orderItemsDeleteHandler(ItemsService, collection, database, schema, input, amqpChannel, env, fcmApp_driver, ServiceUnavailableException, axios);
-		logger.debug('order.items.update fired.')
+		logger.debug('orderItemsDeleteHandler order.items.update fired.')
 		logger.debug('input: ' + JSON.stringify(input));
 		//logger.debug('collection: ' + collection);
 		//logger.debug('database: ' + database);
@@ -172,7 +190,6 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 
 				if (msg.fields.routingKey == constValues.rabbitmq_routing_routingkey_routeconfirmed) {
 
-
 					logger.info('RouteConfirmedIntegrationEvent');
 					logger.info('msg.fields.routingkey: ' + msg.fields.routingKey);
 					// await ordersService.updateOne(key: msg.fields.routingKey, data: {
@@ -187,6 +204,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 					};
 
 					//try {
+					logger.info('parsedContent.startTimeMinimum: ' + parsedContent.startTimeMinimum);
 
 					var order = await axios.patch(env.PUBLIC_URL + '/items/order' + '/' + parsedContent.orderId + '?fields=*.*&access_token=' + env.API_ACCESS_TOKEN, {
 						route_id: parsedContent.newRouteId == undefined ? parsedContent.routeId : parsedContent.newRouteId,
@@ -199,7 +217,6 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 						// console.log(order);
 						return order;
 					});
-
 
 					// send E-Mail
 
@@ -363,22 +380,118 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 							// logger.debug(order);
 							return order;
 						});
+
+						// send driver app pushes
+						// deactivate driver push, replaced by driver warning rabbitmq_routing_routingkey_currentroute_changed_driver_warning
+						if (false && env.SEND_FCM !== undefined && env.SEND_FCM == true) {
+							console.log('send fcm to drivers: notification_message_routechanged');
+							console.log('orderId: ' + parsedContent.orderId + " type: " + typeof parsedContent.orderId);
+							console.log('oldRouteId: ' + parsedContent.oldRouteId + " type: " + typeof parsedContent.oldRouteId);
+							
+							const newRouteId = parsedContent.newRouteId == undefined ? parsedContent.routeId : parsedContent.newRouteId
+							console.log('newRouteId: ' + newRouteId);
+
+							const driverTokens = await getDriverTokens(tokenService);
+							// const driverTokens = ["czuzFSSPTWK7qGnmlLzjvQ:APA91bGTy_BqLNXsW48oEaclmen39MbY-3tAq_Nt5BzfWnWHmrqB7jqZsYtTxGgIzPfVSA-gG0Qzht4RgVzgDXn-dn5Pn4ENkjdIfFUjCI3MGAkdnBtCGRI"]
+
+							logger.debug('getDriverTokens returned:' + JSON.stringify(driverTokens));
+							
+							if (driverTokens !== undefined && driverTokens.length > 0) {
+								getMessaging(fcmApp_driver).sendEachForMulticast({
+									tokens: driverTokens,
+									data: {
+										id: "10",
+										order_id: parsedContent.orderId.toString(),
+										route_id_old: parsedContent.oldRouteId.toString(),
+										route_id_new: newRouteId.toString()
+									},
+									android: {
+										notification: {
+											bodyLocKey: "notification_message_routechanged",
+											titleLocKey: "notification_title_routechanged"
+										}
+									},
+									apns: {
+										payload: {
+											aps: {
+												alert: {
+													locKey: "notificationMessageRoutechanged",
+													titleLocKey: "notificationTitleRoutechanged"
+												}
+											}
+										}
+									}
+								}).then((respo) => {
+									logger.debug('response from fcm driver transmit for notification_message_routechanged: ' + JSON.stringify(respo));
+								}).catch((error) => {
+									logger.error('Error during fcm transmission of notification_message_routechanged!');
+								})
+							}
+						}
+					} catch (error) {
+						logger.error(error);
+					}
+
+				} else if (msg.fields.routingKey == constValues.rabbitmq_routing_routingkey_currentroute_changed_driver_warning) {
+					logger.info('CurrentRouteChangedDriverWarningIntegrationEvent');
+					logger.info('msg.fields.routingkey: ' + msg.fields.routingKey);					
+
+					try {
+						// send driver app pushes
+						if (env.SEND_FCM !== undefined && env.SEND_FCM == true) {
+							console.log('send fcm to drivers: currentroute_changed_driver_warning');
+							console.log('routeId: ' + parsedContent.routeId + " type: " + typeof parsedContent.routeId);
+							console.log('busId: ' + parsedContent.busId + " type: " + typeof parsedContent.busId);
+							
+							const routeId = parsedContent.routeId
+							const busId = parsedContent.busId
+
+							const driverTokens = await getDriverTokens(tokenService);
+							// const driverTokens = ["czuzFSSPTWK7qGnmlLzjvQ:APA91bGTy_BqLNXsW48oEaclmen39MbY-3tAq_Nt5BzfWnWHmrqB7jqZsYtTxGgIzPfVSA-gG0Qzht4RgVzgDXn-dn5Pn4ENkjdIfFUjCI3MGAkdnBtCGRI"]
+
+							logger.debug('getDriverTokens returned:' + JSON.stringify(driverTokens));
+							
+							if (driverTokens !== undefined && driverTokens.length > 0) {
+								getMessaging(fcmApp_driver).sendEachForMulticast({
+									tokens: driverTokens,
+									data: {
+										id: "11",
+										route_id: routeId.toString(),
+										bus_id: busId.toString()
+									},
+									android: {
+										notification: {
+											bodyLocKey: "notification_message_currentroute_changed_driver_warning",
+											titleLocKey: "notification_title_currentroute_changed_driver_warning"
+										}
+									},
+									apns: {
+										payload: {
+											aps: {
+												alert: {
+													locKey: "notificationMessageCurrentRouteChangedDriverWarning",
+													titleLocKey: "notificationTitleCurrentRouteChangedDriverWarning"
+												}
+											}
+										}
+									}
+								}).then((respo) => {
+									logger.debug('response from fcm driver transmit for notification_message_currentroute_changed_driver_warning: ' + JSON.stringify(respo));
+								}).catch((error) => {
+									logger.error('Error during fcm transmission of notification_message_currentroute_changed_driver_warning!');
+								})
+							}
+						}
 					} catch (error) {
 						logger.error(error);
 					}
 
 				} else if (msg.fields.routingKey == constValues.rabbitmq_routing_routingkey_routerejected) {
-					// Ensure datetime is valid and formatted correctly
-					const datetimeValue = parsedContent.datetime ? new Date(parsedContent.datetime).toISOString() : new Date().toISOString();
-
-					// Check for other undefined or empty values and handle them
-					const reasonValue = parsedContent.reason || "No reason provided";
-
 					logger.info('RouteRejectedIntegrationEvent');
-					logger.info('orderId: ' + parsedContent.orderId);
+					const bookingTimeValue = await convertToLocalTime(parsedContent, 'de-DE', 'Europe/Berlin');
+					const reasonValue = parsedContent.reason || "No reason provided from routing";		
 					logger.info('cancellationReason: ' + reasonValue);
-					logger.info('datetimeValue: ' + datetimeValue);
-					logger.info('parsedContent.datetime: ' + parsedContent.datetime);
+
 					const options = {
 						headers: {
 							'Content-Type': 'application/json'
@@ -390,7 +503,7 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 							logger.info('parsedContent.orderId is not valid: ' + parsedContent.orderId + ' - can not update order status (there is no item with this orderId)');
 						}
 						else {
-							await axios.patch(env.PUBLIC_URL + '/items/order' + '/' + parsedContent.orderId + '?access_token=' + env.API_ACCESS_TOKEN, {
+							await axios.patch(env.PUBLIC_URL + '/items/order/' + parsedContent.orderId + '?access_token=' + env.API_ACCESS_TOKEN, {
 								status: "Cancelled",
 								cancellation_reason: "cancelled by RouteRejected Event"
 							}, options);
@@ -400,21 +513,39 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 					}
 
 					try {
+						let userId = "";
+						let first_name = "";
+						let last_name = "";
+						let email = "";
+						let is_departure = false;
+
+						if (!parsedContent.orderId || parsedContent.orderId < 0) {
+							logger.info("!parsedContent.orderId || parsedContent.orderId < 0");
+						}
+						else {
+    						({ userId, first_name, last_name, email, is_departure } = await GetUserAttributes(parsedContent));
+						}
+
 						const response: AxiosResponse = await axios.post(env.PUBLIC_URL + '/items/rejected?access_token=' + env.API_ACCESS_TOKEN, {
 							orderId: parsedContent.orderId.toString(),
 							reason: reasonValue,
 							start: parsedContent.start.toString(),
 							destination: parsedContent.destination.toString(),
-							datetime: datetimeValue,
+							bookingTime: bookingTimeValue,
 							seats: parsedContent.seats,
-							seats_wheelchair: parsedContent.seats_wheelchair
+							seats_wheelchair: parsedContent.seats_wheelchair,
+							user_id: userId,
+							first_name: first_name,
+							last_name: last_name,
+							email: email,
+							is_departure: is_departure
 						}, options);
 
-						logger.info('added new rejected item, response: ');
-    					logger.info(JSON.stringify(response.data, null, 2)); // Pretty-print the response data
+						logger.info('added new rejected item, response: ' + JSON.stringify(response.data, null, 2)); // Pretty-print the response data
 					} catch (err) {
 						logger.error("Error posting new rejected item in RouteRejectedIntegrationEvent: " + err);
 					}
+
 				} else if (msg.fields.routingKey == constValues.rabbitmq_routing_routingkey_routefrozen) {
 					logger.info('routeFrozenIntegrationEvent');
 					logger.info('routeFrozen: ' + parsedContent?.routeId);
@@ -623,6 +754,43 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 		}
 	}
 
+	async function GetUserAttributes(parsedContent: any) {
+		let userId = "";
+		let first_name = "";
+		let last_name = "";
+		let email = "";
+		let order;
+		let is_departure = false;
+
+		// get order
+		try {
+			order = await getOrderByOrderId(ordersService, parsedContent.orderId);
+			// console.log('Order:', order);
+		}
+		catch (err) {
+			logger.error("Error geting order and user information in RouteRejectedIntegrationEvent: " + err);
+		}
+
+		// get user attributes
+		if (order.length > 0) {
+			userId = order[0].user_created.id.toString();
+			logger.info(`user_id: ${userId}`);
+
+			first_name = order[0].user_created.first_name.toString();
+			// logger.info(`first_name: ${first_name}`);
+			last_name = order[0].user_created.last_name.toString();
+			// logger.info(`last_name: ${last_name}`);
+			email = order[0].user_created.email.toString();
+			// logger.info(`email: ${email}`);
+			is_departure = order[0].is_departure;
+			// logger.info(`is_departure: ${is_departure}`);
+		}
+		else {
+			logger.info(`No order with orderId ${parsedContent.orderId} found. Can not read user inforamtion.`);
+		}
+		return { userId, first_name, last_name, email, is_departure};
+	}
+
 	async function addUserTokensToOrders(tokenService: any, ordersByRouteId: FcmTokenDto[]) {
 		for (let index = 0; index < ordersByRouteId.length; index++) {
 			const tokens = await tokenService.readByQuery({
@@ -658,6 +826,51 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 			});
 		});
 		return ordersOnRoute;
+	}
+
+	// async function getOrdersByRouteId(routeId: number) {
+	// 	var access_token = await adminLogin(env, logger);
+	// 	const ordersOnRouteResponse = await axios.get(env.PUBLIC_URL + '/items/order?fields=*.*&filter[route_id][_eq]=' + routeId + '&access_token=' + access_token);
+	// 	var ordersOnRoute: FcmTokenDto[] = [];
+	// 	logger.debug('ordersOnRouteResponse');
+	// 	logger.debug(JSON.stringify(ordersOnRouteResponse));
+	// 	ordersOnRouteResponse.data.data.forEach((order: any) => {
+	// 		logger.debug('Order.');
+	// 		logger.debug(JSON.stringify(order))
+	// 		if (order["status"] == "Reserved") {
+	// 			ordersOnRoute.push({
+	// 				user_created: order["user_created"]["id"],
+	// 				start: order["start_address_id"]["name"],
+	// 				stop: order["destination_address_id"]["name"],
+	// 				date: order["departure_time"],
+	// 				tokens: []
+	// 			});
+	// 		}
+	// 	});
+	// 	return ordersOnRoute;
+	// }
+	async function getOrderByOrderId(ordersService: any, orderId: number) { // userService: any, 
+		try {
+			const order = await ordersService.readByQuery({
+				fields: ['*.*'],
+				filter: {
+					id: {
+						_eq: orderId
+					}
+				}
+			});
+
+			if (order.length === 0) {
+				throw new Error(`Order with ID ${orderId} not found.`);
+			}
+			else {
+				console.log(`getOrderByOrderId done: ${orderId}`);
+				return order;
+			}
+		} catch (error) {
+			console.error('Error in getOrderByOrderId:', error);
+			throw error;
+		}
 	}
 
 	async function amqpInit(): Promise<any> {
@@ -698,7 +911,8 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 
 			await amqpChannel.bindQueue(constValues.rabbitmq_directus_receiving_queue, constValues.rabbitmq_routing_exchange,
 				constValues.rabbitmq_routing_routingkey_routechanged);
-
+			await amqpChannel.bindQueue(constValues.rabbitmq_directus_receiving_queue, constValues.rabbitmq_routing_exchange,
+				constValues.rabbitmq_routing_routingkey_currentroute_changed_driver_warning);
 			await amqpChannel.bindQueue(constValues.rabbitmq_directus_receiving_queue, constValues.rabbitmq_routing_exchange,
 				constValues.rabbitmq_routing_routingkey_routeconfirmed);
 			await amqpChannel.bindQueue(constValues.rabbitmq_directus_receiving_queue, constValues.rabbitmq_routing_exchange,
@@ -720,7 +934,61 @@ export default async ({ action, filter, init }, { env, services, getSchema, exce
 		}
 	}
 
-	//#endregion
+	async function convertToLocalTime(parsedContent: any, language: string, timeZone: string) {
+		logger.info('orderId: ' + parsedContent.orderId);
+		logger.info('parsedContent.bookingTime: ' + parsedContent.bookingTime);
+
+		let bookingTimeValue;
+		try {
+			const correctedBookingTimeString = parsedContent.bookingTime.includes("+00:00")
+				? parsedContent.bookingTime.replace("+00:00", "")
+				: parsedContent.bookingTime;
+
+			// Umwandlung in ein Date-Objekt
+			const bookingTime = new Date(correctedBookingTimeString);
+
+			// format time to local timeZone like 'Europe/Berlin'
+			// language like 'de-DE'
+			const localTimeString = new Intl.DateTimeFormat(language, {
+				timeZone: timeZone,
+				year: 'numeric',
+				month: '2-digit',
+				day: '2-digit',
+				hour: '2-digit',
+				minute: '2-digit',
+				second: '2-digit',
+			}).format(bookingTime);
+			// console.log("bookingTime (Berlin):", berlinTimeString);
+
+			// Überprüfung der Gültigkeit von localTimeString
+			// const isValidLocalTimeString = localTimeString && /^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}:\d{2}$/.test(localTimeString);
+			if (!localTimeString) {
+				console.error("Invalid localTimeString:", localTimeString);
+				return parsedContent.bookingTime;
+			}
+
+			// Parsen des formatierten Strings
+			const [datePart = '', timePart = ''] = localTimeString.split(', ');
+			const [day = '', month = '', year = ''] = datePart.split('.');
+			const [hour = '', minute = '', second = ''] = timePart.split(':');
+
+			// Erstellen eines neuen Date-Objekts in Berlin Time
+			bookingTimeValue = new Date(
+				parseInt(year, 10),
+				parseInt(month, 10) - 1, // Monate sind nullbasiert
+				parseInt(day, 10),
+				parseInt(hour, 10),
+				parseInt(minute, 10),
+				parseInt(second, 10)
+			);
+
+			// console.log("bookingTimeValue:", bookingTimeValue);
+		} catch (error) {
+			console.error("Error processing booking time:", error);
+		}
+
+		return bookingTimeValue;
+	}
 };
 
 async function setApiKeyFromEnv(env: any, logger: any) {
@@ -743,8 +1011,6 @@ async function setApiKeyFromEnv(env: any, logger: any) {
 
 	logger.debug('done setting new access_token to adminUser:' + adminUserId);
 }
-
-
 
 async function setEnvAccessTokenToUserId(env: any, adminUserId: any, access_token: any, logger: any) {
 	await axios.patch(env.PUBLIC_URL + '/users/' + adminUserId, {
